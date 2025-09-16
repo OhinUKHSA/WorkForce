@@ -1,0 +1,894 @@
+<!-- 
+---------------------------
+ Script name: WF_report_update
+
+ Purpose of script:
+    This is the main script which will create the report for wider distribution.
+
+ Author: Owen Williams
+
+ Date Created: 16/09/2025
+---------------------------
+
+ Notes: 
+ - To run this script, ensure you have all necessary packages installed.
+   You should have already run: Load_Packages.R
+
+ - Required .csv files in /data/:
+     * appraisees.csv   --- Download from SARD 
+     * appraisers.csv   --- Download from SARD 
+     * Compliance.csv   --- Download from SARD 
+     * Trend_data.csv   --- Updated with new data
+
+ To run this code press 'Control' + 'A' then 'Enter'
+---------------------------
+-->
+
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Libaries
+require(tidyverse)
+require(plotly)
+require(kableExtra)
+require(tsibble)
+
+# Define the target month (current month or next, depending on proximity to month-end)
+target_month = yearmonth(Sys.Date())
+
+```
+---
+title: "`r paste0('Monthly Regional Data: ', format((Sys.Date() + days(3)) %m-% months(1), '%B %Y'))`"
+author: "Philip Brittain"
+format:
+  html:
+    embed-resources: true
+    fig-cap: true
+    toc: true
+    toc-depth: 3
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Import Data
+Appraiser = read.csv('data/appraisers.csv')
+appraisee = read.csv('data/appraisees.csv')
+Compliance = read.csv('data/compliance.csv')
+trend = read.csv('data/Trend_data.csv')
+
+
+# filter data
+
+Appraiser_filtered = Appraiser %>%
+  mutate(Setting.By.Region = str_replace(Setting.By.Region, regex('Crem Ref', ignore_case = TRUE), 'LA')) %>%
+  filter(!str_detect(Setting.By.Region, regex("NHSE", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("\\(SA\\)", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Micro", ignore_case = TRUE)),
+         # !str_detect(Setting.By.Region, regex("Appraiser only", ignore_case = TRUE))
+         ) %>%
+  select(Setting.By.Region) %>%
+  # split setting.by.region string
+  separate(Setting.By.Region, into = c("Employment setting", "Region"), sep = " \\(|\\)", extra = "drop", fill = "right") %>%
+  # Group employment setting
+  mutate(`Employment setting` = case_when(
+    `Employment setting` %in% c('GMC LA', 'UKPHR LA', 'GDC LA') ~ 'LA',
+    `Employment setting` %in% c('GMC DHSC', 'UKPHR DHSC') ~ 'DHSC',
+    `Employment setting` %in% c('GMC UKHSA', 'UKPHR UKHSA', 'Appraiser only') ~ 'UKHSA',
+    `Employment setting` %in% c('GMC HEI DHSC', 'GMC HEI UKHSA', 'UKPHR HEI UKHSA', 'UKPHR HEI DHSC') ~ 'HEI',
+    TRUE ~ `Employment setting`  # Keep original value for unmatched rows
+  )) %>%
+  mutate(Region = factor(Region, levels = c('LIC', 'MEE', 'NOE', 'SOE')))
+
+
+
+Appraisee_filtered = appraisee %>% 
+  # mutate(Appraiser = na_if(Appraiser, "")) %>%
+  mutate(Setting.By.Region = str_replace(Setting.By.Region, regex('Crem Ref', ignore_case = TRUE), 'LA')) %>%
+  filter(!is.na(Appraiser)) %>%
+  filter(!str_detect(Setting.By.Region, regex("Admin", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Appraiser only", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Micro", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("NHSE", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("\\(SA\\)", ignore_case = TRUE))
+  ) %>%
+  select(Setting.By.Region) %>%
+  # split setting.by.region string
+  separate(Setting.By.Region, into = c("Employment setting", "Region"), sep = " \\(|\\)", extra = "drop", fill = "right") %>%
+  # Group employment setting
+  mutate(`Employment setting` = case_when(
+    `Employment setting` %in% c('GMC LA', 'UKPHR LA', 'GDC LA') ~ 'LA',
+    `Employment setting` %in% c('GMC DHSC', 'UKPHR DHSC', 'Dental DHSC') ~ 'DHSC',
+    `Employment setting` %in% c('GMC UKHSA', 'UKPHR UKHSA') ~ 'UKHSA',
+    `Employment setting` %in% c('GMC HEI DHSC', 'GMC HEI UKHSA', 'UKPHR HEI UKHSA', 'UKPHR HEI DHSC') ~ 'HEI',
+    TRUE ~ `Employment setting`  # Keep original value for unmatched rows
+  )) %>%
+  mutate(Region = factor(Region, levels = c('LIC', 'MEE', 'NOE', 'SOE')))
+
+# filter compliance
+Compliance = Compliance %>%
+  mutate(Setting.By.Region = str_replace(Setting.By.Region, regex('Crem Ref', ignore_case = TRUE), 'LA')) %>%
+  filter(!str_detect(Setting.By.Region, regex("NHSE", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("\\(SA\\)", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Micro", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Dental DHSC", ignore_case = TRUE)),
+         !str_detect(Setting.By.Region, regex("Admin", ignore_case = TRUE)),
+  ) %>%
+  select(Setting.By.Region, Current.Appraisal.Compliance) %>%
+  # split setting.by.region string
+  separate(Setting.By.Region, into = c("Employment setting", "Region"), sep = " \\(|\\)", extra = "drop", fill = "right") %>%
+  mutate(`Group` = case_when(
+    str_detect(`Employment setting`, 'UKPHR') ~ 'UKPHR',
+    str_detect(`Employment setting`, 'GMC') ~ 'GMC',
+    TRUE ~ NA 
+  )) %>%
+  # Group employment setting
+  mutate(`Employment setting` = case_when(
+    `Employment setting` %in% c('GMC LA', 'UKPHR LA', 'GDC LA') ~ 'LA',
+    `Employment setting` %in% c('GMC DHSC', 'UKPHR DHSC') ~ 'DHSC',
+    `Employment setting` %in% c('GMC UKHSA', 'UKPHR UKHSA', 'Appraiser only') ~ 'UKHSA',
+    `Employment setting` %in% c('GMC HEI DHSC', 'GMC HEI UKHSA', 'UKPHR HEI UKHSA', 'UKPHR HEI DHSC') ~ 'HEI',
+    TRUE ~ `Employment setting`  # Keep original value for unmatched rows
+  )) %>%
+  mutate(Current.Appraisal.Compliance = case_when(
+    Current.Appraisal.Compliance %in% c('Non-Compliant') ~ 'Non-Compliant',
+    Current.Appraisal.Compliance %in% c("Compliant", "Compliant with Upcoming Renewal") ~ 'Compliant',
+    TRUE ~ `Current.Appraisal.Compliance`  # Keep original value for unmatched rows
+  )) %>%
+  mutate(Region = factor(Region, levels = c('LIC', 'MEE', 'SOE', 'NOE')))
+
+
+# Trend data Region
+trend = trend %>%
+  mutate(Date = yearmonth(Date)) %>%
+  mutate(Region = factor(Region, levels = c('LIC', 'MEE', 'SOE', 'NOE', 'Total'))) %>%
+  complete(Date, Region, fill = list(Appraisees = 0, Appraisers = 0, Ratio = 0, `Appraisers Required` = 0, Vacancies = 0)) %>%
+  tsibble(key = 'Region', index = 'Date')
+
+# Create Function to add total to table
+add_totals <- function(table) {
+  # Sum only positive numbers in each column
+  rowTot <- colSums(table * (table > 0))
+  table_with_totals <- rbind(table, Total = rowTot)
+  lastRow = nrow(table_with_totals)
+  
+  colTot <- rowSums(table_with_totals)
+  table_with_totals <- cbind(table_with_totals, Total = colTot)
+  lastcol = ncol(table_with_totals) + 1
+  
+  return(kable(table_with_totals, align = 'c') %>%
+           kable_styling(position = "center") %>%
+           row_spec(lastRow, color = 'white',
+                    background = '#423d3d',
+                    bold = TRUE) %>%
+           column_spec(lastcol,
+                       color = 'white',
+                       background = '#423d3d',
+                       bold = TRUE)
+         )
+}
+
+
+# Create Function to add 
+totalRow = function(table) {
+  
+  # Add the "Total" row
+  combined_table = rbind(
+    table,
+    data.frame(
+      Region = "Total",
+      Appraisee = sum(table$Appraisee, na.rm = TRUE),
+      Appraiser = sum(table$Appraiser, na.rm = TRUE),
+      Ratio = round(sum(table$Appraiser, na.rm = TRUE)/sum(table$Appraisee, na.rm = TRUE), 2),
+      Ideal_Appraiser = sum(table$Ideal_Appraiser[table$Ideal_Appraiser > 0], na.rm = TRUE),
+      Vacancies = sum(table$Vacancies[table$Vacancies > 0], na.rm = TRUE)
+    )
+  ) %>%
+    rename(`Appraisers Required` = Ideal_Appraiser,
+           Appraisees = Appraisee,
+           Appraisers = Appraiser
+           )
+  
+  lastRow = nrow(combined_table)
+  
+  # Generate the table with styles
+  kable(combined_table, align = 'c') %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), position = "center") %>%
+    row_spec(lastRow, color = 'white', background = '#423d3d',
+             bold = TRUE) %>%  # Bold the last row
+    column_spec(
+      column = which(names(combined_table) == "Vacancies"),
+      color = ifelse(
+        combined_table$Vacancies < 0, "#1e873a",
+        ifelse(combined_table$Vacancies > 0, "#b34742", "#979c98")
+      ),
+      bold = TRUE
+    )
+}
+
+# Get total row - specific for appending trend_regionSetting.csv
+totalRow_raw = function(table, workSetting) {
+  # Add the "Total" row
+  rbind(
+    table,
+    data.frame(
+      Region = "Total",
+      Appraisee = sum(table$Appraisee, na.rm = TRUE),
+      Appraiser = sum(table$Appraiser, na.rm = TRUE),
+      Ratio = round(sum(table$Appraiser, na.rm = TRUE)/sum(table$Appraisee, na.rm = TRUE), 2),
+      Ideal_Appraiser = sum(table$Ideal_Appraiser[table$Ideal_Appraiser > 0], na.rm = TRUE),
+      Vacancies = sum(table$Vacancies[table$Vacancies > 0], na.rm = TRUE)
+    )
+  ) %>%
+    rename(`Appraisers.Required` = Ideal_Appraiser,
+           Appraisees = Appraisee,
+           Appraisers = Appraiser
+    ) %>%
+    mutate(Date = yearmonth(Sys.Date()) - 1,
+           Setting = workSetting) %>%
+    select(Date, Region, Setting, everything())
+}
+  
+  
+
+# order Employment setting
+Appraisee_filtered$`Employment setting` = factor(Appraisee_filtered$`Employment setting`, 
+                                                  levels = c("UKHSA", "DHSC", "HEI", "LA"))
+
+
+Appraiser_filtered$`Employment setting` = factor(Appraiser_filtered$`Employment setting`, 
+                                                  levels = c("UKHSA", "DHSC", "HEI", "LA"))
+
+Compliance$`Employment setting` = factor(Compliance$`Employment setting`, 
+                                                  levels = c("UKHSA", "DHSC", "HEI", "LA"))
+
+
+```
+
+## 1. Appraisee and appraiser numbers by region and employment setting {#sec-Background}
+
+:::: {#tbl-GroupSummaries tbl-cap="**Appraisee and appraiser numbers by region and employment setting**"}
+::: panel-tabset
+### Appraisees
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+add_totals(table(Appraisee_filtered$Region, Appraisee_filtered$`Employment setting`))
+
+```
+
+### Appraisers
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+add_totals(table(Appraiser_filtered$Region, Appraiser_filtered$`Employment setting`))
+```
+:::
+::::
+
+## 2. Appraiser/appraisee ratios, appraisers required and appraiser vacancies by region
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Group by geogrpahy ------------------------------------------------------
+
+Geography_WF <- left_join(
+  Appraisee_filtered %>%
+    group_by(Region) %>%
+    summarise(Appraisee = n()),
+  Appraiser_filtered %>%
+    group_by(Region) %>%
+    summarise(Appraiser = n(), .groups = "drop"),
+  by = "Region"
+) %>%
+  mutate(
+    Region = factor(Region, levels = c('LIC', 'MEE', 'SOE', 'NOE')),
+    across(where(is.numeric), ~ replace_na(., 0)),
+    Ratio = round(Appraiser/Appraisee, 2),
+    Ideal_Appraiser = round(Appraisee/2,0),
+    Vacancies = Ideal_Appraiser - Appraiser
+  ) %>%
+  arrange(Region)
+
+
+# check whether trend data is up-to-date and update accordingly including csv file
+# custom_colors2 = c("#8fbcbb", "#2e3440", "#4c566a", "#d8dee9", '#ddbf81')
+custom_colors2 = c("#12436D", "#28A197", "#801650", "#F46A25", '#A285D1')
+
+# # Only update if target_month is not already in the data
+# if (!(target_month %in% trend$Date)) {
+#   newTrendData = rbind(
+#     Geography_WF,
+#     data.frame(
+#       Region = "Total",
+#       Appraisee = sum(Geography_WF$Appraisee, na.rm = TRUE),
+#       Appraiser = sum(Geography_WF$Appraiser, na.rm = TRUE),
+#       Ratio = round(sum(Geography_WF$Appraiser, na.rm = TRUE)/sum(Geography_WF$Appraisee, na.rm = TRUE), 2),
+#       Ideal_Appraiser = sum(Geography_WF$Ideal_Appraiser[Geography_WF$Ideal_Appraiser > 0], na.rm = TRUE),
+#       Vacancies = sum(Geography_WF$Vacancies[Geography_WF$Vacancies > 0], na.rm = TRUE)
+#     )
+#   ) %>%
+#     rename(Appraisers.Required = Ideal_Appraiser,
+#            Appraisees = Appraisee,
+#            Appraisers = Appraiser
+#     ) %>%
+#     mutate(Date = target_month - 1) %>%
+#     select(Date, everything())
+#   
+#   trend = bind_rows(as_tibble(trend), newTrendData)
+#   write.csv(trend, file = 'data/Trend_data.csv')
+#   
+# }
+
+# make sure Date column is a yearmonth
+trend <- trend %>% mutate(Date = yearmonth(Date))
+
+# only add if target_month not already present
+if (!((target_month - 1) %in% trend$Date)) {
+  
+  newTrendData <- bind_rows(
+    Geography_WF,
+    data.frame(
+      Region = "Total",
+      Appraisee = sum(Geography_WF$Appraisee, na.rm = TRUE),
+      Appraiser = sum(Geography_WF$Appraiser, na.rm = TRUE),
+      Ratio = round(
+        sum(Geography_WF$Appraiser, na.rm = TRUE) /
+        sum(Geography_WF$Appraisee, na.rm = TRUE), 2
+      ),
+      Ideal_Appraiser = sum(
+        Geography_WF$Ideal_Appraiser[Geography_WF$Ideal_Appraiser > 0], 
+        na.rm = TRUE
+      ),
+      Vacancies = sum(
+        Geography_WF$Vacancies[Geography_WF$Vacancies > 0], 
+        na.rm = TRUE
+      )
+    )
+  ) %>%
+    rename(
+      Appraisers.Required = Ideal_Appraiser,
+      Appraisees = Appraisee,
+      Appraisers = Appraiser
+    ) %>%
+    mutate(Date = yearmonth(target_month)) %>%
+    select(Date, everything())
+  
+  trend <- bind_rows(trend, newTrendData)
+  write.csv(trend, file = "data/Trend_data.csv", row.names = FALSE)
+}
+
+
+
+
+#* Update underlying dataset if new month or month nearly ending
+# Define the target month (current month or next, depending on proximity to month-end)
+target_month = yearmonth(Sys.Date())
+
+
+# function to create plotly figures
+plotly_plot = function(data){
+  data %>%
+    mutate(
+      BarColor = ifelse(Ratio < 0.5, "#d88787", "#c8f0d3")  # Define color for each bar
+    ) %>%
+    plot_ly(
+      x = ~ Region,
+      y = ~ Ratio,
+      type = 'bar',
+      marker = list(color = ~ BarColor),  # Apply the defined colors
+      text = ~paste(
+        'Region: ', Region,
+        "<br>Appraisees: ", Appraisee,
+        "<br>Appraisers: ", Appraiser,
+        "<br>Ratio: ", Ratio,
+        "<br>Vacancies: ", Vacancies
+      ),
+      hoverinfo = "text",
+      textposition = "none"
+    ) %>%
+    layout(
+      shapes = list(
+        list(
+          type = "line",
+          x0 = 4-0.5,  
+          x1 = -0.5,  
+          y0 = 0.5,  
+          y1 = 0.5,  
+          line = list(
+            color = "black",  
+            dash = "dash",    
+            width = 2         
+          )
+        )
+      ),
+      title = "Bar Chart Showing Appraiser to Appraisee Ratios",
+      xaxis = list(title = "Region"),
+      yaxis = list(
+        title = "Ratio",
+        range = c(0, 1)
+      )
+    )
+}
+
+
+# Create Trendplot
+
+trendPlot <- trend %>%
+  ggplot(aes(x = Date, y = Ratio, color = Region, group = Region)) +
+  geom_line(aes(text = paste("Date:", Date,
+                             "<br>Region:", Region,
+                             "<br>Ratio:", Ratio,
+                             "<br>Appraisers:", Appraisers,
+                             "<br>Appraisees:", Appraisees,
+                             "<br>Vacancies:", Vacancies))) + 
+  geom_point(aes(text = paste("Date:", Date,
+                              "<br>Region:", Region,
+                              "<br>Ratio:", Ratio,
+                              "<br>Appraisers:", Appraisers,
+                              "<br>Appraisees:", Appraisees,
+                              "<br>Vacancies:", Vacancies))) +
+  ylim(0,1) +
+  geom_hline(yintercept=0.5, linetype="dashed", color = "#d88787") +
+  scale_color_manual(values = custom_colors2) + 
+  labs(y = "Ratio (Appraiser:Appraisee)", x = "Date", color = "Region") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+```
+
+::: panel-tabset
+### Table
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region.** Higher ratios indicate more appraisers, with an ideal target of 0.5, which equates to 1 appraiser for every 2 appraisees. '*Appraisers Required*' is the total number of appraisers required to have 1 appraiser for every 2 appraisees, based on the current total number of appraisees. ‘*Vacancies*’ is the current shortfall."
+#| label: tbl-Geography
+
+totalRow(Geography_WF)
+```
+
+### Barchart
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-Geog
+#| fig-cap: "**Bar Chart showing appraiser to appraisee ratios by region.** Dashed line indicates target ratio of 0.5. Bars below that target are red, bars above target are green."
+
+plotly_plot(Geography_WF)
+```
+
+### Trends
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-Trend
+#| fig-cap: "**Line plot showing month-on-month trend in appraiser to appraisee ratios by region**: Dashed red line indicates target ratio of 0.5, points below this line indicate vaccancies"
+
+# Convert ggplot to Plotly
+ggplotly(trendPlot, tooltip = "text") %>%
+  layout(legend = list(orientation = "h",  
+                       x = 0.5,             
+                       xanchor = "center", 
+                       y = -0.2),
+         yaxis = list(range = c(0.2, 0.6))
+  )
+
+```
+:::
+
+## 3. Appraiser/appraisee ratios, appraisers required and appraiser vacancies by region and employment setting
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Group by Region and employment setting ------------------------------------------------------
+
+
+Region_status_WF <- left_join(
+  Appraiser_filtered %>%
+    group_by(`Employment setting`, Region) %>%
+    summarise(
+      Appraiser = n(),
+      .groups = "drop"
+    ) %>%
+    group_by(Region) %>%
+    summarise(
+      `Appraiser:LA` = sum(Appraiser[`Employment setting` %in% c('LA')]),
+      `Appraiser:DHSC` = sum(Appraiser[`Employment setting` %in% c("DHSC")]),
+      `Appraiser:UKHSA` = sum(Appraiser[`Employment setting` %in% c("UKHSA")]),
+      `Appraiser:HEI` = sum(Appraiser[`Employment setting` %in% c("HEI")]),
+      .groups = "drop"
+    ),
+  Appraisee_filtered %>%
+    group_by(`Employment setting`, Region) %>%
+    summarise(
+      Appraisee = n(),
+      .groups = "drop"
+    ) %>%
+    group_by(Region) %>%
+    summarise(
+      `Appraisee:LA` = sum(Appraisee[`Employment setting` %in% c('LA')]),
+      `Appraisee:DHSC` = sum(Appraisee[`Employment setting` %in% c("DHSC")]),
+      `Appraisee:UKHSA` = sum(Appraisee[`Employment setting` %in% c("UKHSA")]),
+      `Appraisee:HEI` = sum(Appraisee[`Employment setting` %in% c("HEI")]),
+      .groups = "drop"
+    ),
+  by = "Region"
+) %>%
+  mutate(
+    Region = factor(Region, levels = c('LIC', 'MEE', 'SOE', 'NOE')),
+    across(where(is.numeric), ~ replace_na(., 0))
+  )
+
+
+# Create function to extract relevant data
+groupRegion = function(data, appraiser, appraisee){
+  table = data %>%
+    select(Region, all_of(appraisee), all_of(appraiser)) %>%
+    rename(Appraiser = appraiser,
+           Appraisee = appraisee) %>%
+    mutate(
+      Ratio = round(Appraiser/Appraisee, 2),
+      Ideal_Appraiser = round(Appraisee/2,0),
+      Vacancies = Ideal_Appraiser - Appraiser
+    ) %>%
+    arrange(Region)
+  return(table)
+}
+
+
+
+```
+
+Tables 3-6 and Figures 3-6 detail appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region and employment setting.
+
+::::::::::: panel-tabset
+### UKHSA
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region for the UKHSA**"
+#| label: tbl-UKHSA
+
+suppressWarnings(
+  totalRow(groupRegion(Region_status_WF, 'Appraiser:UKHSA', 'Appraisee:UKHSA'))
+)
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing appraiser to appraisee ratios by region for the UKHSA**. Dashed line indicates target ratio of 0.5. Bars below that target are red, bars above target are green"
+#| label: fig-UKHSAz
+
+plotly_plot(groupRegion(Region_status_WF, 'Appraiser:UKHSA', 'Appraisee:UKHSA'))
+```
+:::
+
+### DHSC
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region for the DHSC**"
+#| label: tbl-DHSC
+
+totalRow(groupRegion(Region_status_WF, 'Appraiser:DHSC', 'Appraisee:DHSC'))
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing appraiser to appraisee ratios by region for the DHSC**. Dashed line indicates target ratio of 0.5. Bars below that target are red, bars above target are green"
+#| label: fig-DHSC
+
+plotly_plot(groupRegion(Region_status_WF, 'Appraiser:DHSC', 'Appraisee:DHSC'))
+```
+:::
+
+### HEI
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region for the HEI**"
+#| label: tbl-HEI
+
+totalRow(groupRegion(Region_status_WF, 'Appraiser:HEI', 'Appraisee:HEI'))
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing appraiser to appraisee ratios by region for the HEI**. Dashed line indicates target ratio of 0.5. Bars below that target are red, bars above target are green"
+#| label: fig-HEI
+
+plotly_plot(groupRegion(Region_status_WF, 'Appraiser:HEI', 'Appraisee:HEI'))
+```
+:::
+
+### LA
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| tbl-cap: "**Appraisee and appraiser numbers, ratios, appraisers required and appraiser vacancies by region for the LA**"
+#| label: tbl-LAGMC
+
+
+totalRow(groupRegion(Region_status_WF, 'Appraiser:LA', 'Appraisee:LA'))
+
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing appraiser to appraisee ratios by region for the LA**. Dashed line indicates target ratio of 0.5. Bars below that target are red, bars above target are green"
+#| label: fig-LAGMC
+
+
+plotly_plot(groupRegion(Region_status_WF, 'Appraiser:LA', 'Appraisee:LA'))
+
+```
+:::
+:::::::::::
+
+## 4. Appraisal Compliance
+
+Tables 7-9 and Figures 7-9 show current compliance rates with the requirement to undertake an annual professional appraisal by region, employment setting and professional background.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: functionsCompliance
+
+
+
+# functions for compliance
+#* Table
+TableCompliance = function(data, groupFilter = NULL) {
+  
+  if (!is.null(groupFilter)) {
+    data <- data %>% filter(Group == groupFilter)
+  }
+  
+  data %>%
+    group_by(`Employment setting`, Region) %>%
+    summarise(
+      compliant = round(sum(Current.Appraisal.Compliance %in% 'Compliant', na.rm = TRUE) / n() * 100, 1),
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from = `Employment setting`,
+      values_from = compliant
+    ) %>%
+    mutate(across(UKHSA:LA, ~ paste0(., '%'))) %>%
+    mutate(across(UKHSA:LA, ~ ifelse(as.numeric(str_remove(., '%')) < 95,
+                                     paste0("<b><span style='color:#b34742;'>", ., "</span></b>"),
+                                     .))) %>%
+    kable(escape = FALSE, format = "html") %>%
+    kable_styling("striped", full_width = FALSE)
+}
+
+#* Figure
+
+# custom_colors = c("#8fbcbb", "#2e3440", "#4c566a", "#d8dee9")
+custom_colors = c("#12436D", "#28A197", "#801650", "#F46A25")
+
+complianceFigure <- function(data, groupFilter = NULL) {
+  
+  # Apply filter only if groupFilter is provided
+  if (!is.null(groupFilter)) {
+    data <- data %>% filter(Group == groupFilter)
+  }
+  
+  plot <- data %>%
+    group_by(`Employment setting`, Region) %>%
+    summarise(
+      Count = n(),
+      CompliantCount = sum(Current.Appraisal.Compliance == 'Compliant', na.rm = TRUE),
+      CompliantPercent = round(CompliantCount / Count * 100, 1),
+      .groups = "drop"
+    ) %>%
+    complete(`Employment setting`, Region, fill = list(Count = 0, CompliantCount = 0, CompliantPercent = 0)) %>%
+    mutate(
+      text_label = paste0(
+        "Employment Setting: ", `Employment setting`, "<br>",
+        "Region: ", Region, "<br>",
+        "Percentage Compliant: ", CompliantPercent, "%<br>",
+        "Count: ", Count, "<br>",
+        "Compliant: ", CompliantCount, "<br>"
+      )
+    ) %>%
+    ggplot() +
+    geom_col(aes(
+      x = `Employment setting`,
+      y = CompliantPercent,
+      fill = Region,
+      text = text_label
+    ), position = position_dodge2(width = 0.8, preserve = "single")) +
+    scale_fill_manual(values = custom_colors) +
+    labs(y = "Compliance Percentage", x = "Employment Setting", fill = "Region") +
+    theme_minimal()
+  
+  ggplotly(plot, tooltip = "text") %>%
+    layout(
+      legend = list(
+        orientation = "h",
+        x = 0.5,
+        y = -0.2,
+        xanchor = "center",
+        yanchor = "top"
+      )
+    )
+}
+
+
+```
+
+::::::::: panel-tabset
+### All
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Compliance Rate - All**"
+#| label: tbl-Compliance_all
+
+suppressWarnings(
+ TableCompliance(Compliance)
+)
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing compliance rates by region and employment setting within the UKPHR and GMC**"
+#| label: fig-complianceAll
+
+complianceFigure(Compliance)
+```
+:::
+
+### UKPHR
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Compliance Rate - UKPHR**"
+#| label: tbl-Compliance_UKPHR
+
+suppressWarnings(
+ TableCompliance(Compliance, 'UKPHR')
+)
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing compliance rates by region and employment setting within the UKPHR**"
+#| label: fig-compliance_UKPHR
+
+complianceFigure(Compliance, 'UKPHR')
+
+```
+:::
+
+### GMC
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| output: asis
+#| tbl-cap: "**Compliance Rate - GMC**"
+#| label: tbl-Compliance_GMC
+
+suppressWarnings(
+ TableCompliance(Compliance, 'GMC')
+)
+```
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-cap: "**Bar Chart showing compliance rates by region and employment setting within the GMC**"
+#| label: fig-compliance_GMC
+
+complianceFigure(Compliance, 'GMC')
+
+```
+:::
+:::::::::
+
+## 5. Acronyms and Abbreviations
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: tbl-acronym
+#| tbl-cap: "**Acronyms and abbreviations**"
+
+
+acronyms = tibble(
+  'Group' = c(rep('Region', 4), rep('Employment Setting', 4)),
+  'Acronym' = c('LIC', 'MEE', 'NOE', 'SOE', 'UKHSA', 'DHSC', 'HEI', 'LA'),
+  'Full name' = c('London and Inner Counties', 'Midlands and East of England',
+                  'North of England', 'South of England',
+                  'UK Health Security Agency', 'Department of Health and Social Care',
+                  'Higher Education Institutes','Local Authorities')
+)
+
+kable(acronyms, align = 'c') %>%
+           kable_styling(position = "center")
+
+```

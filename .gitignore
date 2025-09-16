@@ -1,0 +1,30 @@
+# --- R / RStudio ---
+.Rhistory
+.RData
+.Ruserdata
+
+
+# --- Quarto / R Markdown build artefacts ---
+*_files/
+*_cache/
+_freeze/
+_site/
+_book/
+.Rcache/
+.quarto/
+**/lib/
+**/libs/
+*.utf8.md
+*.knit.md
+
+
+# Ignore all CSV files
+*.csv
+
+# Ignore all Excel files
+*.xlsx
+*.xls
+
+# Ignore all HTML files
+*.html
+.Rproj.user
