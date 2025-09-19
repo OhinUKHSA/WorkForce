@@ -1,5 +1,8 @@
 # Workforce Report – Standard Operating Procedure (SOP)
 
+⚠️ **Note:**  A more detailed SOP can be viewed in `Detailed_SOP.docx`
+
+
 ## Contents
 1. Repository Structure
 1. Description  
@@ -15,15 +18,25 @@
 ## 1. Repository Structure
 
 ├── data/ # All required input data (.csv files)
+
 │ ├── appraisees.csv # Exported from SARD
+
 │ ├── appraisers.csv # Exported from SARD
+
 │ ├── compliance.csv # Exported from SARD
+
 │ ├── Trend_data.csv # Auto-updated each run with new monthly data
+
 │ └── old_data/ # Backup of old csv files
+
 │
+
 ├── Load_packages.R # Script to install/load required R packages
+
 ├── WF_report_update.qmd # Quarto file for report generation
+
 ├── Workforce_project.Rproj # R Project file
+
 └── README.md # This document
 
 
