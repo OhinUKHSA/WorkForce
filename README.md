@@ -56,10 +56,10 @@ This guide explains how to generate the **Workforce Report** each month. It cove
    - **Git (x64)**  
 
 2. Download the repository from GitHub:  
-   - Open **RStudio**. (see image 2.1 and 2.2)  
-   - Go to **File → New Project → Version Control**. (see image 2.3)  
+   - Open **RStudio**  
+   - Go to **File → New Project → Version Control**  
    - Select **Git**.  
-   - Enter the following (see image 2.4):  
+   - Enter the following:  
      - **Repository URL:** `https://github.com/OhinUKHSA/WorkForce.git`  
      - **Project directory name:** `Workforce` (or a name of your choice)  
      - **Location:** Choose where you want the project stored  
@@ -108,8 +108,8 @@ At this point, your `data/` folder should contain:
 ## 5. Create Main Report  
 1. Open the R project file: **`WorkForce Project.Rproj`**.  
 2. Open the Quarto file: **`WF_report_update.qmd`** (File → Open File → `WF_report_update.qmd`).  
-3. Make sure the `.qmd` file is active in the editor tab. (see image 5.2)  
-4. Click the **Render** button (see image 5.2).  
+3. Make sure the `.qmd` file is active in the editor tab. 
+4. Click the **Render** button.  
 5. After a few seconds, a new file will be created (or overwritten):  
 - **`WF_report_update.html`**  
 ⚠️ If you already have a `WF_report_update.html` from a previous month, move it into:  
